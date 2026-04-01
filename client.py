@@ -58,8 +58,26 @@ class RemoteCLIClient:
         self.copilot_session_id = str(uuid.uuid4())
         self.copilot_config_dir = Path.home() / ".copilot-remote" / name
         self.copilot_config_dir.mkdir(parents=True, exist_ok=True)
+        # Default working directory: sibling *_sessions repo folder
+        self.working_dir = self._find_sessions_dir(repo)
 
     # ── GitHub API ──────────────────────────────────────────────
+
+    @staticmethod
+    def _find_sessions_dir(repo: str) -> Path | None:
+        """Locate the sibling *_sessions repo directory to use as cwd."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, timeout=5,
+            )
+            git_root = Path(result.stdout.strip())
+            sessions_dir = git_root.parent / repo
+            if sessions_dir.is_dir():
+                return sessions_dir
+        except Exception:
+            pass
+        return None
 
     def _api(self, method: str, path: str, **kwargs):
         url = f"{self.base_url}{path}"
@@ -283,6 +301,7 @@ class RemoteCLIClient:
                 stderr=subprocess.PIPE,
                 encoding="utf-8",
                 errors="replace",
+                cwd=self.working_dir,
                 env={**os.environ, "NO_COLOR": "1", "PYTHONUTF8": "1"},
             )
 
@@ -422,6 +441,7 @@ class RemoteCLIClient:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True,
                 encoding="utf-8", errors="replace", timeout=30,
+                cwd=self.working_dir,
             )
             parts = []
             if result.stdout:
@@ -448,6 +468,7 @@ class RemoteCLIClient:
     def run(self):
         print(f"🔄 [{self.name}] Polling Issue #{self.issue_number} every {self.POLL_INTERVAL}s")
         print(f"   Responds to prompts targeted at: \"{self.name}\" or \"all\"")
+        print(f"   Working dir:     {self.working_dir or os.getcwd()}")
         print(f"   Copilot session: {self.copilot_session_id}")
         print(f"   Copilot config:  {self.copilot_config_dir}")
         print("   Press Ctrl+C to stop\n")
