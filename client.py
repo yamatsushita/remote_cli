@@ -208,7 +208,7 @@ class RemoteCLIClient:
                 "| `\\status` | System information |\n"
                 "| `\\shell <cmd>` | Run a shell command (30 s timeout) |\n"
                 "| `\\help` | This help message |\n"
-                "| _anything else_ | Treated as a prompt (echoed back) |\n"
+                "| _anything else_ | Sent to GitHub Copilot CLI |\n"
             )
 
         if text.lower() == "\\status":
@@ -224,7 +224,35 @@ class RemoteCLIClient:
         if text.lower().startswith("\\shell "):
             return self._run_shell(text[7:].strip())
 
-        return f"📨 Echo: {text}"
+        return self._run_copilot(text)
+
+    def _run_copilot(self, prompt: str) -> str:
+        """Send a prompt to the local GitHub Copilot CLI."""
+        import re as _re
+        try:
+            result = subprocess.run(
+                ["gh", "copilot", "-p", prompt, "--allow-all-tools"],
+                capture_output=True, text=True, timeout=300,
+                env={**os.environ, "NO_COLOR": "1"},
+            )
+            output = result.stdout.strip()
+            # Strip ANSI escape codes
+            output = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
+            if not output and result.stderr:
+                output = result.stderr.strip()
+                output = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
+            if not output:
+                return "_Copilot returned no output._"
+            # Truncate to fit GitHub comment limits
+            if len(output) > 60000:
+                output = output[:60000] + "\n\n_(truncated)_"
+            return output
+        except subprocess.TimeoutExpired:
+            return "⏰ Copilot timed out (5 min limit)."
+        except FileNotFoundError:
+            return "❌ `gh copilot` not found. Install GitHub CLI with Copilot extension."
+        except Exception as e:
+            return f"❌ Copilot error: {e}"
 
     def _run_shell(self, cmd: str) -> str:
         try:
