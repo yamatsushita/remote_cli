@@ -99,11 +99,21 @@ class RemoteCLIClient:
         comments = self._api(
             "GET", f"/issues/{issue_number}/comments?per_page=100"
         )
-        for c in comments:
-            self.processed_ids.add(c["id"])
+        # Mark comments up to the last response/status as processed.
+        # Comments posted AFTER that are pending prompts and will be
+        # picked up on the first poll cycle.
+        last_handled = -1
+        for i, c in enumerate(comments):
+            body = c.get("body", "")
+            if body.startswith("### 🤖 Response") or body.startswith("### 📡 Status"):
+                last_handled = i
+        for i, c in enumerate(comments):
+            if i <= last_handled:
+                self.processed_ids.add(c["id"])
+        pending = len(comments) - last_handled - 1
         print(
             f"✅ [{self.name}] Joined session: Issue #{issue_number} "
-            f"({len(comments)} existing comments)"
+            f"({len(comments)} comments, {pending} pending)"
         )
         self._post_status("🟢 Connected and ready.")
 
