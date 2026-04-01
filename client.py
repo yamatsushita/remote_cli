@@ -125,6 +125,14 @@ class RemoteCLIClient:
 
     def join_session(self, issue_number: int):
         self.issue_number = issue_number
+        # Update the issue title to reflect this client's name
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        try:
+            self._api("PATCH", f"/issues/{issue_number}", json={
+                "title": f"Remote CLI Session – {self.name} – {ts}",
+            })
+        except Exception:
+            pass
         comments = self._api(
             "GET", f"/issues/{issue_number}/comments?per_page=100"
         )
