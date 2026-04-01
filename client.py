@@ -18,11 +18,13 @@ Environment:
 import os
 import sys
 import time
+import uuid
 import signal
 import platform
 import argparse
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
@@ -50,6 +52,10 @@ class RemoteCLIClient:
         self.running = True
         self.last_heartbeat = 0.0
         self.status_comment_id: int | None = None
+        # Copilot CLI session — one persistent session per client
+        self.copilot_session_id = str(uuid.uuid4())
+        self.copilot_config_dir = Path.home() / ".copilot-remote" / name
+        self.copilot_config_dir.mkdir(parents=True, exist_ok=True)
 
     # ── GitHub API ──────────────────────────────────────────────
 
@@ -218,6 +224,7 @@ class RemoteCLIClient:
                 f"- **Host:** {platform.node()}\n"
                 f"- **OS:** {platform.system()} {platform.release()}\n"
                 f"- **Python:** {platform.python_version()}\n"
+                f"- **Copilot session:** `{self.copilot_session_id}`\n"
                 f"- **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             )
 
@@ -227,11 +234,18 @@ class RemoteCLIClient:
         return self._run_copilot(text)
 
     def _run_copilot(self, prompt: str) -> str:
-        """Send a prompt to the local GitHub Copilot CLI."""
+        """Send a prompt to the local GitHub Copilot CLI with session continuity."""
         import re as _re
         try:
+            cmd = [
+                "gh", "copilot",
+                "-p", prompt,
+                "--allow-all",
+                f"--resume={self.copilot_session_id}",
+                f"--config-dir={self.copilot_config_dir}",
+            ]
             result = subprocess.run(
-                ["gh", "copilot", "-p", prompt, "--allow-all"],
+                cmd,
                 capture_output=True, text=True, timeout=300,
                 env={**os.environ, "NO_COLOR": "1"},
             )
@@ -289,6 +303,8 @@ class RemoteCLIClient:
     def run(self):
         print(f"🔄 [{self.name}] Polling Issue #{self.issue_number} every {self.POLL_INTERVAL}s")
         print(f"   Responds to prompts targeted at: \"{self.name}\" or \"all\"")
+        print(f"   Copilot session: {self.copilot_session_id}")
+        print(f"   Copilot config:  {self.copilot_config_dir}")
         print("   Press Ctrl+C to stop\n")
 
         while self.running:
