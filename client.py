@@ -16,6 +16,7 @@ Environment:
 """
 
 import os
+import re
 import sys
 import time
 import uuid
@@ -23,6 +24,7 @@ import signal
 import platform
 import argparse
 import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -161,10 +163,26 @@ class RemoteCLIClient:
         comment = self._post_comment(f"### 🤖 Response [{self.name}]\n\n{text}")
         self.processed_ids.add(comment["id"])
 
+    def _create_response_comment(self, text: str) -> int:
+        """Create a response comment and return its ID."""
+        comment = self._post_comment(
+            f"### 🤖 Response [{self.name}]\n\n{text}"
+        )
+        self.processed_ids.add(comment["id"])
+        return comment["id"]
+
+    def _update_response_comment(self, comment_id: int, text: str):
+        """Update an existing response comment in-place."""
+        body = f"### 🤖 Response [{self.name}]\n\n{text}"
+        self._api(
+            "PATCH",
+            f"/issues/comments/{comment_id}",
+            json={"body": body},
+        )
+
     # ── Polling ─────────────────────────────────────────────────
 
     def _get_new_prompts(self) -> list[dict]:
-        import re
         comments = self._api(
             "GET", f"/issues/{self.issue_number}/comments?per_page=100"
         )
@@ -233,9 +251,23 @@ class RemoteCLIClient:
 
         return self._run_copilot(text)
 
-    def _run_copilot(self, prompt: str) -> str:
-        """Send a prompt to the local GitHub Copilot CLI with session continuity."""
-        import re as _re
+    def _run_copilot(self, prompt: str) -> str | None:
+        """Send a prompt to Copilot CLI with streaming progress updates.
+
+        Creates a response comment immediately ("thinking…"), updates it
+        with intermediate output every few seconds, and finalises it when
+        Copilot completes.  Returns ``None`` to signal the caller that
+        the response has already been posted.
+        """
+        STREAM_UPDATE_INTERVAL = 5   # seconds between progress edits
+        TIMEOUT = 300                # 5-minute hard limit
+
+        # ── Post the initial "thinking" comment ──────────────────
+        comment_id = self._create_response_comment(
+            "⏳ _Copilot is thinking…_"
+        )
+        start_time = time.time()
+
         try:
             cmd = [
                 "gh", "copilot",
@@ -244,40 +276,142 @@ class RemoteCLIClient:
                 f"--resume={self.copilot_session_id}",
                 f"--config-dir={self.copilot_config_dir}",
             ]
-            result = subprocess.run(
+
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True, encoding="utf-8", errors="replace",
-                timeout=300,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
                 env={**os.environ, "NO_COLOR": "1", "PYTHONUTF8": "1"},
             )
-            stdout = (result.stdout or "")
-            stderr = (result.stderr or "")
-            # Strip ANSI escape codes
-            stdout = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stdout)
-            stderr = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stderr)
-            # Remove the usage summary block that gh copilot appends
+
+            # Reader threads — accumulate lines in shared lists
+            stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
+            lock = threading.Lock()
+
+            def _read_stream(stream, lines):
+                try:
+                    while True:
+                        line = stream.readline()
+                        if not line:
+                            break
+                        with lock:
+                            lines.append(line)
+                except Exception:
+                    pass
+
+            t_out = threading.Thread(
+                target=_read_stream, args=(proc.stdout, stdout_lines),
+                daemon=True,
+            )
+            t_err = threading.Thread(
+                target=_read_stream, args=(proc.stderr, stderr_lines),
+                daemon=True,
+            )
+            t_out.start()
+            t_err.start()
+
+            # ── Poll for intermediate output ─────────────────────
+            last_update_time = start_time
+            last_snapshot = ""
+
+            while proc.poll() is None:
+                time.sleep(0.5)
+                elapsed = time.time() - start_time
+
+                # Hard timeout
+                if elapsed > TIMEOUT:
+                    proc.kill()
+                    proc.wait()
+                    self._update_response_comment(
+                        comment_id,
+                        "⏰ Copilot timed out (5 min limit).",
+                    )
+                    return None
+
+                # Periodic progress update
+                now = time.time()
+                if now - last_update_time >= STREAM_UPDATE_INTERVAL:
+                    with lock:
+                        cur_out = "".join(stdout_lines)
+                        cur_err = "".join(stderr_lines)
+
+                    raw = cur_out or cur_err
+                    display = re.sub(
+                        r"\x1b\[[0-9;]*[a-zA-Z]", "", raw
+                    ).strip()
+                    elapsed_str = f"{int(elapsed)}s"
+
+                    if display and display != last_snapshot:
+                        # Show partial output + spinner
+                        preview = display[:60000]
+                        body = (
+                            f"{preview}\n\n"
+                            f"⏳ _Copilot is still working… "
+                            f"({elapsed_str} elapsed)_"
+                        )
+                        last_snapshot = display
+                    else:
+                        body = (
+                            f"⏳ _Copilot is working… "
+                            f"({elapsed_str} elapsed)_"
+                        )
+
+                    try:
+                        self._update_response_comment(comment_id, body)
+                    except Exception:
+                        pass
+                    last_update_time = now
+
+            # ── Process exited — collect final output ────────────
+            t_out.join(timeout=5)
+            t_err.join(timeout=5)
+
+            with lock:
+                stdout = "".join(stdout_lines)
+                stderr = "".join(stderr_lines)
+
+            # Clean ANSI escape codes
+            stdout = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stdout)
+            stderr = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stderr)
+
+            # Strip usage summary block
             usage_re = r"\n*Total usage est:.*"
-            stdout_clean = _re.sub(usage_re, "", stdout, flags=_re.DOTALL).strip()
-            stderr_clean = _re.sub(usage_re, "", stderr, flags=_re.DOTALL).strip()
-            # Prefer stdout (normal case); fall back to stderr
+            stdout_clean = re.sub(
+                usage_re, "", stdout, flags=re.DOTALL
+            ).strip()
+            stderr_clean = re.sub(
+                usage_re, "", stderr, flags=re.DOTALL
+            ).strip()
+
             output = stdout_clean or stderr_clean
             if not output:
-                return (
-                    f"_Copilot returned no output (exit code {result.returncode})._"
+                output = (
+                    f"_Copilot returned no output "
+                    f"(exit code {proc.returncode})._"
                 )
-            # Truncate to fit GitHub comment limits
             if len(output) > 60000:
                 output = output[:60000] + "\n\n_(truncated)_"
-            return output
-        except subprocess.TimeoutExpired:
-            return "⏰ Copilot timed out (5 min limit)."
+
+            # Final update — remove progress indicator
+            self._update_response_comment(comment_id, output)
+            return None
+
         except FileNotFoundError:
-            return (
+            self._update_response_comment(
+                comment_id,
                 "❌ `gh copilot` not found. "
-                "Install GitHub CLI with Copilot extension."
+                "Install GitHub CLI with Copilot extension.",
             )
+            return None
         except Exception as e:
-            return f"❌ Copilot error: {type(e).__name__}: {e}"
+            self._update_response_comment(
+                comment_id,
+                f"❌ Copilot error: {type(e).__name__}: {e}",
+            )
+            return None
 
     def _run_shell(self, cmd: str) -> str:
         try:
@@ -324,8 +458,9 @@ class RemoteCLIClient:
                         f"⏳ Processing prompt from @{p['user']}…"
                     )
                     response = self.process_prompt(p)
-                    self._post_response(response)
-                    print(f"   ✅ Response sent ({len(response)} chars)")
+                    if response is not None:
+                        self._post_response(response)
+                    print(f"   ✅ Response posted")
                     self._post_status("🟢 Client connected and ready.")
                     self.last_heartbeat = time.time()
 
@@ -358,14 +493,13 @@ def _detect_repo_from_git() -> tuple[str, str] | None:
     Returns (owner, sessions_repo) where sessions_repo is the
     companion '*_sessions' repository used for issue-based communication.
     """
-    import re as _re
     try:
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
             capture_output=True, text=True, timeout=5,
         )
         url = result.stdout.strip()
-        m = _re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
+        m = re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
         if m:
             owner = m.group(1)
             repo = m.group(2)
