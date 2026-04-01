@@ -24,11 +24,13 @@ A serverless bridge between a **GitHub Pages web interface** and a **local CLI c
 ### 0. Set up your repositories
 
 1. **Fork** this repository (code + Python client)
-2. **Create** a companion `*_sessions` repository (e.g. `remote_cli_sessions`) for the web UI and session issues
+2. **Create** a **private** companion `*_sessions` repository (e.g. `remote_cli_sessions`) for the web UI and session issues
 3. Copy `docs/index.html` from this repo (or from [yamatsushita/remote_cli_sessions](https://github.com/yamatsushita/remote_cli_sessions)) into `docs/` of your sessions repo
 4. Enable **GitHub Pages** on the sessions repo: `Settings → Pages → Source: main, /docs`
 
 > **Why two repos?** The sessions repo keeps CLI session issues separate from code issues (bugs, feature requests).
+>
+> **Why private?** Session issues may contain sensitive information (commands, output, file contents). Keep the sessions repo private to restrict access.
 
 ### 1. Generate a GitHub Personal Access Token
 
