@@ -395,8 +395,12 @@ class RemoteCLIClient:
             if len(output) > 60000:
                 output = output[:60000] + "\n\n_(truncated)_"
 
-            # Final update — remove progress indicator
-            self._update_response_comment(comment_id, output)
+            # Final update — replace progress indicator with "Done"
+            elapsed_total = int(time.time() - start_time)
+            self._update_response_comment(
+                comment_id,
+                f"{output}\n\n✅ _Done ({elapsed_total}s)_",
+            )
             return None
 
         except FileNotFoundError:
