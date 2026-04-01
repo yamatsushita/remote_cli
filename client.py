@@ -231,18 +231,20 @@ class RemoteCLIClient:
         import re as _re
         try:
             result = subprocess.run(
-                ["gh", "copilot", "-p", prompt, "--allow-all-tools"],
+                ["gh", "copilot", "-p", prompt, "--allow-all"],
                 capture_output=True, text=True, timeout=300,
                 env={**os.environ, "NO_COLOR": "1"},
             )
-            output = result.stdout.strip()
+            stdout = (result.stdout or "").strip()
+            stderr = (result.stderr or "").strip()
             # Strip ANSI escape codes
-            output = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
-            if not output and result.stderr:
-                output = result.stderr.strip()
-                output = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
+            stdout = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stdout)
+            stderr = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stderr)
+            output = stdout or stderr
             if not output:
-                return "_Copilot returned no output._"
+                return (
+                    f"_Copilot returned no output (exit code {result.returncode})._"
+                )
             # Truncate to fit GitHub comment limits
             if len(output) > 60000:
                 output = output[:60000] + "\n\n_(truncated)_"
@@ -250,9 +252,12 @@ class RemoteCLIClient:
         except subprocess.TimeoutExpired:
             return "⏰ Copilot timed out (5 min limit)."
         except FileNotFoundError:
-            return "❌ `gh copilot` not found. Install GitHub CLI with Copilot extension."
+            return (
+                "❌ `gh copilot` not found. "
+                "Install GitHub CLI with Copilot extension."
+            )
         except Exception as e:
-            return f"❌ Copilot error: {e}"
+            return f"❌ Copilot error: {type(e).__name__}: {e}"
 
     def _run_shell(self, cmd: str) -> str:
         try:
