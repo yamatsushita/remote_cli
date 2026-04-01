@@ -104,7 +104,7 @@ class RemoteCLIClient:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         hostname = platform.node()
         issue = self._api("POST", "/issues", json={
-            "title": f"Remote CLI Session – {ts}",
+            "title": f"Remote CLI Session – {self.name} – {ts}",
             "body": (
                 "🖥️ **Remote CLI Session**\n\n"
                 "This issue is the communication channel between the web "
