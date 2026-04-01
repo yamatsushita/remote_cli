@@ -246,8 +246,9 @@ class RemoteCLIClient:
             ]
             result = subprocess.run(
                 cmd,
-                capture_output=True, text=True, timeout=300,
-                env={**os.environ, "NO_COLOR": "1"},
+                capture_output=True, encoding="utf-8", errors="replace",
+                timeout=300,
+                env={**os.environ, "NO_COLOR": "1", "PYTHONUTF8": "1"},
             )
             stdout = (result.stdout or "")
             stderr = (result.stderr or "")
@@ -281,7 +282,8 @@ class RemoteCLIClient:
     def _run_shell(self, cmd: str) -> str:
         try:
             result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=30
+                cmd, shell=True, capture_output=True,
+                encoding="utf-8", errors="replace", timeout=30,
             )
             parts = []
             if result.stdout:
