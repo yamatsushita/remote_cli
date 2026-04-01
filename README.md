@@ -66,12 +66,16 @@ Multiple clients can join the same session. Each client has a unique `--name` (d
 
 ## Built-in commands
 
-| Command         | Description                        |
-|-----------------|------------------------------------|
-| `ping`          | Check if the client is alive       |
-| `status`        | Show host system information       |
-| `shell <cmd>`   | Run a shell command (30 s timeout) |
-| `help`          | List available commands            |
+Built-in commands start with `\` to distinguish them from regular prompts.
+
+| Command          | Description                        |
+|------------------|------------------------------------|
+| `\ping`          | Check if the client is alive       |
+| `\status`        | Show host system information       |
+| `\shell <cmd>`   | Run a shell command (30 s timeout) |
+| `\help`          | List available commands            |
+
+Any other text is treated as a prompt and echoed back by default.
 
 ## Architecture
 
@@ -81,6 +85,7 @@ Multiple clients can join the same session. Each client has a unique `--name` (d
 | Message bus     | GitHub Issues API  | Transport layer               |
 | Local client(s) | Python + requests  | Command execution, responses  |
 
-- **Prompts** are comments: `### 🧑 Prompt` (all) or `### 🧑 Prompt ➜ client-name` (targeted)
+- **Prompts** are plain-text comments (any comment not from the client)
+- **Targeted prompts** have a first line: `➜ client-name`
 - **Responses** are comments: `### 🤖 Response [client-name]`
 - **Status** updates are comments: `### 📡 Status [client-name]`

@@ -157,25 +157,27 @@ class RemoteCLIClient:
             if c["id"] in self.processed_ids:
                 continue
             body = c.get("body", "")
-            if body.startswith("### 🧑 Prompt"):
-                # Parse target: "### 🧑 Prompt ➜ target\n\n..."
-                header_match = re.match(
-                    r"### 🧑 Prompt(?:\s*➜\s*(\S+))?\s*\n", body
-                )
-                target = header_match.group(1) if header_match and header_match.group(1) else "all"
-                # Only process if targeted at us or broadcast
-                if target.lower() not in (self.name.lower(), "all"):
-                    continue  # leave unprocessed for the target client
-                prompt_text = re.sub(
-                    r"^### 🧑 Prompt(?:\s*➜\s*\S+)?\s*\n*", "", body
-                ).strip()
-                prompts.append({
-                    "id": c["id"],
-                    "text": prompt_text,
-                    "target": target,
-                    "user": c["user"]["login"],
-                    "ts": c["created_at"],
-                })
+            # Skip our own responses and status updates
+            if body.startswith("### 🤖 Response") or body.startswith("### 📡 Status"):
+                self.processed_ids.add(c["id"])
+                continue
+            # Parse target from "➜ target\n" prefix (first line)
+            target = "all"
+            text = body
+            target_match = re.match(r"^➜\s*(\S+)\s*\n", body)
+            if target_match:
+                target = target_match.group(1)
+                text = body[target_match.end():]
+            # Only process if targeted at us or broadcast
+            if target.lower() not in (self.name.lower(), "all"):
+                continue  # leave unprocessed for the target client
+            prompts.append({
+                "id": c["id"],
+                "text": text.strip(),
+                "target": target,
+                "user": c["user"]["login"],
+                "ts": c["created_at"],
+            })
             self.processed_ids.add(c["id"])
         return prompts
 
@@ -184,22 +186,22 @@ class RemoteCLIClient:
     def process_prompt(self, prompt: dict) -> str:
         text = prompt["text"].strip()
 
-        if text.lower() == "ping":
+        if text.lower() == "\\ping":
             return f"🏓 Pong from **{self.name}**!"
 
-        if text.lower() == "help":
+        if text.lower() == "\\help":
             return (
                 f"**Available commands** (client: `{self.name}`)\n\n"
                 "| Command | Description |\n"
                 "|---------|-------------|\n"
-                "| `ping` | Check if client is alive |\n"
-                "| `status` | System information |\n"
-                "| `shell <cmd>` | Run a shell command (30 s timeout) |\n"
-                "| `help` | This help message |\n"
-                "| _anything else_ | Echoed back |\n"
+                "| `\\ping` | Check if client is alive |\n"
+                "| `\\status` | System information |\n"
+                "| `\\shell <cmd>` | Run a shell command (30 s timeout) |\n"
+                "| `\\help` | This help message |\n"
+                "| _anything else_ | Treated as a prompt (echoed back) |\n"
             )
 
-        if text.lower() == "status":
+        if text.lower() == "\\status":
             return (
                 f"**System information** (client: `{self.name}`)\n\n"
                 f"- **Client name:** {self.name}\n"
@@ -209,8 +211,8 @@ class RemoteCLIClient:
                 f"- **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             )
 
-        if text.lower().startswith("shell "):
-            return self._run_shell(text[6:].strip())
+        if text.lower().startswith("\\shell "):
+            return self._run_shell(text[7:].strip())
 
         return f"📨 Echo: {text}"
 

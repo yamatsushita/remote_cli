@@ -454,28 +454,27 @@ async function loadAllComments() {
 
 function parseComment(comment) {
     const body = comment.body || '';
-    if (body.startsWith('### 🧑 Prompt')) {
-        // Parse "### 🧑 Prompt ➜ target" or "### 🧑 Prompt"
-        const targetMatch = body.match(/^### 🧑 Prompt(?:\s*➜\s*(\S+))?/);
-        const target = targetMatch && targetMatch[1] ? targetMatch[1] : 'all';
-        const content = body.replace(/^### 🧑 Prompt(?:\s*➜\s*\S+)?\s*\n*/, '');
-        return { id: comment.id, type: 'prompt', target, content, ts: comment.created_at, user: comment.user.login };
-    }
     if (body.startsWith('### 🤖 Response')) {
-        // Parse "### 🤖 Response [client-name]"
         const clientMatch = body.match(/^### 🤖 Response\s*\[([^\]]+)\]/);
         const clientName = clientMatch ? clientMatch[1] : 'unknown';
         const content = body.replace(/^### 🤖 Response(?:\s*\[[^\]]+\])?\s*\n*/, '');
         return { id: comment.id, type: 'response', clientName, content, ts: comment.created_at, user: comment.user.login };
     }
     if (body.startsWith('### 📡 Status')) {
-        // Parse "### 📡 Status [client-name]"
         const clientMatch = body.match(/^### 📡 Status\s*\[([^\]]+)\]/);
         const clientName = clientMatch ? clientMatch[1] : 'unknown';
         const content = body.replace(/^### 📡 Status(?:\s*\[[^\]]+\])?\s*\n*/, '');
         return { id: comment.id, type: 'status', clientName, content, ts: comment.created_at, user: comment.user.login };
     }
-    return null;
+    // Everything else is a prompt (plain text)
+    let target = 'all';
+    let content = body;
+    const targetMatch = body.match(/^➜\s*(\S+)\s*\n/);
+    if (targetMatch) {
+        target = targetMatch[1];
+        content = body.slice(targetMatch[0].length);
+    }
+    return { id: comment.id, type: 'prompt', target, content, ts: comment.created_at, user: comment.user.login };
 }
 
 async function pollComments() {
@@ -574,8 +573,8 @@ async function sendPrompt(e) {
     btn.disabled = true; input.disabled = true;
     try {
         const target = document.getElementById('targetSelect').value;
-        const header = target === 'all' ? '### 🧑 Prompt' : `### 🧑 Prompt ➜ ${target}`;
-        const body = `${header}\n\n${text}`;
+        const prefix = target === 'all' ? '' : `➜ ${target}\n`;
+        const body = `${prefix}${text}`;
         const comment = await ghAPI(`/issues/${currentIssue}/comments`, {
             method: 'POST',
             body: JSON.stringify({ body })
