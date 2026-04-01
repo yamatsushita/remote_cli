@@ -58,14 +58,15 @@ class RemoteCLIClient:
         self.copilot_session_id = str(uuid.uuid4())
         self.copilot_config_dir = Path.home() / ".copilot-remote" / name
         self.copilot_config_dir.mkdir(parents=True, exist_ok=True)
-        # Default working directory: sibling *_sessions repo folder
-        self.working_dir = self._find_sessions_dir(repo)
+        # Default working directory: sibling *_sessions repo folder / <name>
+        self.working_dir = self._find_sessions_dir(repo, name)
 
     # ── GitHub API ──────────────────────────────────────────────
 
     @staticmethod
-    def _find_sessions_dir(repo: str) -> Path | None:
-        """Locate the sibling *_sessions repo directory to use as cwd."""
+    def _find_sessions_dir(repo: str, name: str) -> Path | None:
+        """Locate the sibling *_sessions repo directory and create a
+        per-client subdirectory (<name>) to use as cwd."""
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"],
@@ -74,7 +75,9 @@ class RemoteCLIClient:
             git_root = Path(result.stdout.strip())
             sessions_dir = git_root.parent / repo
             if sessions_dir.is_dir():
-                return sessions_dir
+                client_dir = sessions_dir / name
+                client_dir.mkdir(parents=True, exist_ok=True)
+                return client_dir
         except Exception:
             pass
         return None
