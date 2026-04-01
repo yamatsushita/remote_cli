@@ -20,20 +20,24 @@ A serverless bridge between a **GitHub Pages web interface** and a **local CLI c
 
 ## Quick start
 
+### 0. Fork or clone this repo
+
+Fork this repository to your own GitHub account, or use it as a template. Enable **GitHub Pages** from `Settings → Pages → Source: main, /docs`.
+
 ### 1. Generate a GitHub Personal Access Token
 
-Create a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Issues read/write** permission on this repository.
+Create a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Issues read/write** permission on your repository.
 
 ### 2. Start the Python client(s)
 
 ```bash
 pip install -r requirements.txt
 
-# Start a named client (default name = hostname)
+# Run from inside your cloned repo (auto-detects owner/repo)
 python client.py --token ghp_xxx --name desktop
 
-# Start a second client in another terminal
-python client.py --token ghp_xxx --name laptop
+# Or specify owner/repo explicitly
+python client.py --token ghp_xxx --owner YOUR_USER --repo remote_cli --name laptop
 
 # Create a fresh session
 python client.py --new --name server1
@@ -44,10 +48,10 @@ python client.py --join 1 --name worker-2
 
 ### 3. Open the web interface
 
-Go to **https://yamatsushita.github.io/remote_cli/** and enter:
+Go to **https://YOUR_USER.github.io/remote_cli/** (the repo auto-detects from the URL) and enter:
 
 - Your GitHub PAT
-- Repository: `yamatsushita/remote_cli`
+- Repository (pre-filled if opened from GitHub Pages)
 
 Select the active session. Use the **"Send to"** dropdown to target a specific client or broadcast to all.
 

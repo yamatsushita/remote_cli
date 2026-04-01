@@ -257,7 +257,7 @@
         </div>
         <div class="form-group">
             <label for="setupRepo">Repository (owner/repo)</label>
-            <input type="text" id="setupRepo" placeholder="yamatsushita/remote_cli" value="yamatsushita/remote_cli">
+            <input type="text" id="setupRepo" placeholder="owner/repo">
         </div>
         <button class="btn-primary" onclick="saveSetup()">Connect</button>
     </div>
@@ -337,6 +337,15 @@ let messages = [];
 let connectedClients = {};  // { name: { lastSeen: Date, status: string } }
 
 // ─── Init ───
+function detectRepoFromURL() {
+    // Auto-detect owner/repo from GitHub Pages URL: https://{owner}.github.io/{repo}/
+    const host = location.hostname;
+    const path = location.pathname.replace(/^\/|\/$/g, '');
+    const m = host.match(/^([^.]+)\.github\.io$/);
+    if (m && path) return `${m[1]}/${path.split('/')[0]}`;
+    return '';
+}
+
 (function init() {
     const saved = localStorage.getItem('remoteCli');
     if (saved) {
@@ -345,6 +354,9 @@ let connectedClients = {};  // { name: { lastSeen: Date, status: string } }
             if (config.token && config.repo && config.owner) { showChat(); return; }
         } catch (_) {}
     }
+    // Pre-fill repo from GitHub Pages URL
+    const detected = detectRepoFromURL();
+    if (detected) document.getElementById('setupRepo').value = detected;
     document.getElementById('setupScreen').style.display = 'flex';
 })();
 

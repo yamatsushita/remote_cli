@@ -284,6 +284,24 @@ class RemoteCLIClient:
 
 # ── CLI entry point ─────────────────────────────────────────────
 
+def _detect_repo_from_git() -> tuple[str, str] | None:
+    """Try to extract owner/repo from the git remote URL."""
+    import re as _re
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5,
+        )
+        url = result.stdout.strip()
+        # Match HTTPS or SSH remote URLs
+        m = _re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
+        if m:
+            return m.group(1), m.group(2)
+    except Exception:
+        pass
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Remote CLI Client – bridge GitHub ↔ local shell"
@@ -293,8 +311,14 @@ def main():
         default=os.environ.get("GITHUB_TOKEN"),
         help="GitHub PAT (or set GITHUB_TOKEN env var)",
     )
-    parser.add_argument("--owner", default="yamatsushita")
-    parser.add_argument("--repo", default="remote_cli")
+    parser.add_argument(
+        "--owner",
+        help="Repository owner (auto-detected from git remote if omitted)",
+    )
+    parser.add_argument(
+        "--repo",
+        help="Repository name (auto-detected from git remote if omitted)",
+    )
     parser.add_argument(
         "--name",
         default=platform.node(),
@@ -312,7 +336,21 @@ def main():
         print("❌ Token required. Use --token or set GITHUB_TOKEN.")
         sys.exit(1)
 
-    client = RemoteCLIClient(args.token, args.owner, args.repo, args.name)
+    owner = args.owner
+    repo = args.repo
+    if not owner or not repo:
+        detected = _detect_repo_from_git()
+        if detected:
+            owner = owner or detected[0]
+            repo = repo or detected[1]
+        else:
+            print(
+                "❌ Could not detect repository. "
+                "Use --owner and --repo, or run from inside a git clone."
+            )
+            sys.exit(1)
+
+    client = RemoteCLIClient(args.token, owner, repo, args.name)
     signal.signal(signal.SIGINT, lambda *_: setattr(client, "running", False))
 
     if args.join:
