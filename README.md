@@ -5,8 +5,9 @@ A serverless bridge between a **GitHub Pages web interface** and a **local CLI c
 ```
 ┌──────────────┐    GitHub Issues     ┌──────────────┐
 │  Web UI      │◄────────────────────►│  Python CLI  │
-│ (GitHub Pages│   (comments as       │  (your PC)   │
-│   + JS)      │    messages)         │              │
+│ (GitHub Pages│   (*_sessions repo   │  (your PC)   │
+│  on sessions │    comments as       │              │
+│   repo)      │    messages)         │              │
 └──────────────┘                      └──────────────┘
 ```
 
@@ -20,24 +21,29 @@ A serverless bridge between a **GitHub Pages web interface** and a **local CLI c
 
 ## Quick start
 
-### 0. Fork or clone this repo
+### 0. Set up your repositories
 
-Fork this repository to your own GitHub account, or use it as a template. Enable **GitHub Pages** from `Settings → Pages → Source: main, /docs`.
+1. **Fork** this repository (code + Python client)
+2. **Create** a companion `*_sessions` repository (e.g. `remote_cli_sessions`) for the web UI and session issues
+3. Copy `docs/index.html` from this repo (or from [yamatsushita/remote_cli_sessions](https://github.com/yamatsushita/remote_cli_sessions)) into `docs/` of your sessions repo
+4. Enable **GitHub Pages** on the sessions repo: `Settings → Pages → Source: main, /docs`
+
+> **Why two repos?** The sessions repo keeps CLI session issues separate from code issues (bugs, feature requests).
 
 ### 1. Generate a GitHub Personal Access Token
 
-Create a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Issues read/write** permission on your repository.
+Create a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Issues read/write** permission on your **sessions** repository.
 
 ### 2. Start the Python client(s)
 
 ```bash
 pip install -r requirements.txt
 
-# Run from inside your cloned repo (auto-detects owner/repo)
+# Run from inside your cloned repo (auto-detects owner, uses *_sessions repo)
 python client.py --token ghp_xxx --name desktop
 
-# Or specify owner/repo explicitly
-python client.py --token ghp_xxx --owner YOUR_USER --repo remote_cli --name laptop
+# Or specify the sessions repo explicitly
+python client.py --token ghp_xxx --owner YOUR_USER --repo remote_cli_sessions --name laptop
 
 # Create a fresh session
 python client.py --new --name server1
@@ -48,7 +54,7 @@ python client.py --join 1 --name worker-2
 
 ### 3. Open the web interface
 
-Go to **https://YOUR_USER.github.io/remote_cli/** (the repo auto-detects from the URL) and enter:
+Go to **https://YOUR_USER.github.io/remote_cli_sessions/** (auto-detects from the URL) and enter:
 
 - Your GitHub PAT
 - Repository (pre-filled if opened from GitHub Pages)
@@ -81,8 +87,8 @@ Any other text is treated as a prompt and echoed back by default.
 
 | Component       | Technology         | Role                          |
 |-----------------|--------------------|-------------------------------|
-| Web UI          | GitHub Pages + JS  | Chat interface, prompt input  |
-| Message bus     | GitHub Issues API  | Transport layer               |
+| Web UI          | GitHub Pages + JS  | Chat interface (sessions repo)|
+| Message bus     | GitHub Issues API  | Transport layer (sessions repo)|
 | Local client(s) | Python + requests  | Command execution, responses  |
 
 - **Prompts** are plain-text comments (any comment not from the client)

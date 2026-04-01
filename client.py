@@ -353,7 +353,11 @@ class RemoteCLIClient:
 # ── CLI entry point ─────────────────────────────────────────────
 
 def _detect_repo_from_git() -> tuple[str, str] | None:
-    """Try to extract owner/repo from the git remote URL."""
+    """Try to extract owner from the git remote URL.
+
+    Returns (owner, sessions_repo) where sessions_repo is the
+    companion '*_sessions' repository used for issue-based communication.
+    """
     import re as _re
     try:
         result = subprocess.run(
@@ -361,10 +365,14 @@ def _detect_repo_from_git() -> tuple[str, str] | None:
             capture_output=True, text=True, timeout=5,
         )
         url = result.stdout.strip()
-        # Match HTTPS or SSH remote URLs
         m = _re.search(r"github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$", url)
         if m:
-            return m.group(1), m.group(2)
+            owner = m.group(1)
+            repo = m.group(2)
+            # Use the companion _sessions repo for issues
+            if not repo.endswith("_sessions"):
+                repo = repo + "_sessions"
+            return owner, repo
     except Exception:
         pass
     return None
@@ -385,7 +393,7 @@ def main():
     )
     parser.add_argument(
         "--repo",
-        help="Repository name (auto-detected from git remote if omitted)",
+        help="Sessions repository name (default: auto-detect + '_sessions')",
     )
     parser.add_argument(
         "--name",
