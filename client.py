@@ -289,7 +289,7 @@ class RemoteCLIClient:
         the response has already been posted.
         """
         STREAM_UPDATE_INTERVAL = 5   # seconds between progress edits
-        TIMEOUT = 300                # 5-minute hard limit
+        IDLE_TIMEOUT = 1800          # 30-minute idle limit (no new output)
 
         # ── Post the initial "thinking" comment ──────────────────
         comment_id = self._create_response_comment(
@@ -346,18 +346,27 @@ class RemoteCLIClient:
             # ── Poll for intermediate output ─────────────────────
             last_update_time = start_time
             last_snapshot = ""
+            last_output_len = 0        # track output growth for idle detection
+            last_activity_time = start_time
 
             while proc.poll() is None:
                 time.sleep(0.5)
                 elapsed = time.time() - start_time
 
-                # Hard timeout
-                if elapsed > TIMEOUT:
+                # Check for new output to reset idle timer
+                with lock:
+                    current_len = len(stdout_lines) + len(stderr_lines)
+                if current_len != last_output_len:
+                    last_output_len = current_len
+                    last_activity_time = time.time()
+
+                # Idle timeout — no new output for IDLE_TIMEOUT seconds
+                if time.time() - last_activity_time > IDLE_TIMEOUT:
                     proc.kill()
                     proc.wait()
                     self._update_response_comment(
                         comment_id,
-                        "⏰ Copilot timed out (5 min limit).",
+                        "⏰ Copilot timed out (no output for 30 min).",
                     )
                     return None
 
