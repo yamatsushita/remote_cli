@@ -249,12 +249,17 @@ class RemoteCLIClient:
                 capture_output=True, text=True, timeout=300,
                 env={**os.environ, "NO_COLOR": "1"},
             )
-            stdout = (result.stdout or "").strip()
-            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "")
+            stderr = (result.stderr or "")
             # Strip ANSI escape codes
             stdout = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stdout)
             stderr = _re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", stderr)
-            output = stdout or stderr
+            # Remove the usage summary block that gh copilot appends
+            usage_re = r"\n*Total usage est:.*"
+            stdout_clean = _re.sub(usage_re, "", stdout, flags=_re.DOTALL).strip()
+            stderr_clean = _re.sub(usage_re, "", stderr, flags=_re.DOTALL).strip()
+            # Prefer stdout (normal case); fall back to stderr
+            output = stdout_clean or stderr_clean
             if not output:
                 return (
                     f"_Copilot returned no output (exit code {result.returncode})._"
