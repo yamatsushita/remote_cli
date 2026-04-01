@@ -34,10 +34,11 @@ class RemoteCLIClient:
     POLL_INTERVAL = 5
     HEARTBEAT_INTERVAL = 60
 
-    def __init__(self, token: str, owner: str, repo: str):
+    def __init__(self, token: str, owner: str, repo: str, name: str = "default"):
         self.token = token
         self.owner = owner
         self.repo = repo
+        self.name = name
         self.base_url = f"https://api.github.com/repos/{owner}/{repo}"
         self.session = requests.Session()
         self.session.headers.update({
@@ -81,15 +82,16 @@ class RemoteCLIClient:
             "body": (
                 "🖥️ **Remote CLI Session**\n\n"
                 "This issue is the communication channel between the web "
-                "interface and the local CLI client.\n\n"
+                "interface and local CLI clients.\n\n"
                 f"- **Started:** {ts}\n"
                 f"- **Host:** {hostname}\n"
+                f"- **First client:** `{self.name}`\n"
             ),
             "labels": [self.LABEL],
         })
         self.issue_number = issue["number"]
-        print(f"✅ Created session: Issue #{self.issue_number}")
-        self._post_status("🟢 Client connected and ready.")
+        print(f"✅ [{self.name}] Created session: Issue #{self.issue_number}")
+        self._post_status("🟢 Connected and ready.")
         return self.issue_number
 
     def join_session(self, issue_number: int):
@@ -100,10 +102,10 @@ class RemoteCLIClient:
         for c in comments:
             self.processed_ids.add(c["id"])
         print(
-            f"✅ Joined session: Issue #{issue_number} "
+            f"✅ [{self.name}] Joined session: Issue #{issue_number} "
             f"({len(comments)} existing comments)"
         )
-        self._post_status("🟢 Client connected and ready.")
+        self._post_status("🟢 Connected and ready.")
 
     def find_latest_session(self) -> int | None:
         issues = self._api(
@@ -124,7 +126,7 @@ class RemoteCLIClient:
 
     def _post_status(self, text: str):
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        body = f"### 📡 Status\n\n{text}\n\n_Updated: {now_utc}_"
+        body = f"### 📡 Status [{self.name}]\n\n{text}\n\n_Updated: {now_utc}_"
         if self.status_comment_id:
             try:
                 self._api(
@@ -140,12 +142,13 @@ class RemoteCLIClient:
         self.processed_ids.add(comment["id"])
 
     def _post_response(self, text: str):
-        comment = self._post_comment(f"### 🤖 Response\n\n{text}")
+        comment = self._post_comment(f"### 🤖 Response [{self.name}]\n\n{text}")
         self.processed_ids.add(comment["id"])
 
     # ── Polling ─────────────────────────────────────────────────
 
     def _get_new_prompts(self) -> list[dict]:
+        import re
         comments = self._api(
             "GET", f"/issues/{self.issue_number}/comments?per_page=100"
         )
@@ -155,10 +158,21 @@ class RemoteCLIClient:
                 continue
             body = c.get("body", "")
             if body.startswith("### 🧑 Prompt"):
-                prompt_text = body.replace("### 🧑 Prompt", "", 1).strip()
+                # Parse target: "### 🧑 Prompt ➜ target\n\n..."
+                header_match = re.match(
+                    r"### 🧑 Prompt(?:\s*➜\s*(\S+))?\s*\n", body
+                )
+                target = header_match.group(1) if header_match and header_match.group(1) else "all"
+                # Only process if targeted at us or broadcast
+                if target.lower() not in (self.name.lower(), "all"):
+                    continue  # leave unprocessed for the target client
+                prompt_text = re.sub(
+                    r"^### 🧑 Prompt(?:\s*➜\s*\S+)?\s*\n*", "", body
+                ).strip()
                 prompts.append({
                     "id": c["id"],
                     "text": prompt_text,
+                    "target": target,
                     "user": c["user"]["login"],
                     "ts": c["created_at"],
                 })
@@ -171,11 +185,11 @@ class RemoteCLIClient:
         text = prompt["text"].strip()
 
         if text.lower() == "ping":
-            return "🏓 Pong! Client is alive."
+            return f"🏓 Pong from **{self.name}**!"
 
         if text.lower() == "help":
             return (
-                "**Available commands**\n\n"
+                f"**Available commands** (client: `{self.name}`)\n\n"
                 "| Command | Description |\n"
                 "|---------|-------------|\n"
                 "| `ping` | Check if client is alive |\n"
@@ -187,7 +201,8 @@ class RemoteCLIClient:
 
         if text.lower() == "status":
             return (
-                f"**System information**\n\n"
+                f"**System information** (client: `{self.name}`)\n\n"
+                f"- **Client name:** {self.name}\n"
                 f"- **Host:** {platform.node()}\n"
                 f"- **OS:** {platform.system()} {platform.release()}\n"
                 f"- **Python:** {platform.python_version()}\n"
@@ -227,14 +242,16 @@ class RemoteCLIClient:
     # ── Main loop ───────────────────────────────────────────────
 
     def run(self):
-        print(f"🔄 Polling Issue #{self.issue_number} every {self.POLL_INTERVAL}s")
+        print(f"🔄 [{self.name}] Polling Issue #{self.issue_number} every {self.POLL_INTERVAL}s")
+        print(f"   Responds to prompts targeted at: \"{self.name}\" or \"all\"")
         print("   Press Ctrl+C to stop\n")
 
         while self.running:
             try:
                 prompts = self._get_new_prompts()
                 for p in prompts:
-                    print(f"📨 @{p['user']}: {p['text'][:100]}")
+                    target_info = f" (➜ {p['target']})" if p.get('target') != 'all' else ''
+                    print(f"📨 @{p['user']}{target_info}: {p['text'][:100]}")
                     self._post_status(
                         f"⏳ Processing prompt from @{p['user']}…"
                     )
@@ -258,9 +275,9 @@ class RemoteCLIClient:
                 print(f"❌ Error: {e}")
                 time.sleep(self.POLL_INTERVAL)
 
-        print("\n🛑 Shutting down…")
+        print(f"\n🛑 [{self.name}] Shutting down…")
         try:
-            self._post_status("🔴 Client disconnected.")
+            self._post_status(f"🔴 Client `{self.name}` disconnected.")
         except Exception:
             pass
 
@@ -278,6 +295,11 @@ def main():
     )
     parser.add_argument("--owner", default="yamatsushita")
     parser.add_argument("--repo", default="remote_cli")
+    parser.add_argument(
+        "--name",
+        default=platform.node(),
+        help="Client name for multi-client routing (default: hostname)",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--new", action="store_true", help="Create a new session")
     group.add_argument("--join", type=int, metavar="N", help="Join issue #N")
@@ -290,7 +312,7 @@ def main():
         print("❌ Token required. Use --token or set GITHUB_TOKEN.")
         sys.exit(1)
 
-    client = RemoteCLIClient(args.token, args.owner, args.repo)
+    client = RemoteCLIClient(args.token, args.owner, args.repo, args.name)
     signal.signal(signal.SIGINT, lambda *_: setattr(client, "running", False))
 
     if args.join:

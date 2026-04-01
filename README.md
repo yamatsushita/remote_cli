@@ -24,23 +24,22 @@ A serverless bridge between a **GitHub Pages web interface** and a **local CLI c
 
 Create a [fine-grained PAT](https://github.com/settings/tokens?type=beta) with **Issues read/write** permission on this repository.
 
-### 2. Start the Python client
+### 2. Start the Python client(s)
 
 ```bash
 pip install -r requirements.txt
 
-# Using environment variable
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-python client.py
+# Start a named client (default name = hostname)
+python client.py --token ghp_xxx --name desktop
 
-# Or pass token directly
-python client.py --token ghp_xxxxxxxxxxxx
+# Start a second client in another terminal
+python client.py --token ghp_xxx --name laptop
 
 # Create a fresh session
-python client.py --new
+python client.py --new --name server1
 
 # Join a specific session
-python client.py --join 1
+python client.py --join 1 --name worker-2
 ```
 
 ### 3. Open the web interface
@@ -50,7 +49,16 @@ Go to **https://yamatsushita.github.io/remote_cli/** and enter:
 - Your GitHub PAT
 - Repository: `yamatsushita/remote_cli`
 
-Select the active session and start chatting.
+Select the active session. Use the **"Send to"** dropdown to target a specific client or broadcast to all.
+
+## Multi-client support
+
+Multiple clients can join the same session. Each client has a unique `--name` (defaults to hostname).
+
+- **Target a specific client:** select it from the "Send to" dropdown in the web UI
+- **Broadcast to all:** select "All clients" (default)
+- Each client only picks up prompts addressed to it or to `all`
+- Status badges show which clients are online
 
 ## Built-in commands
 
@@ -67,8 +75,8 @@ Select the active session and start chatting.
 |-----------------|--------------------|-------------------------------|
 | Web UI          | GitHub Pages + JS  | Chat interface, prompt input  |
 | Message bus     | GitHub Issues API  | Transport layer               |
-| Local client    | Python + requests  | Command execution, responses  |
+| Local client(s) | Python + requests  | Command execution, responses  |
 
-- **Prompts** are comments starting with `### 🧑 Prompt`
-- **Responses** are comments starting with `### 🤖 Response`
-- **Status** updates are comments starting with `### 📡 Status`
+- **Prompts** are comments: `### 🧑 Prompt` (all) or `### 🧑 Prompt ➜ client-name` (targeted)
+- **Responses** are comments: `### 🤖 Response [client-name]`
+- **Status** updates are comments: `### 📡 Status [client-name]`

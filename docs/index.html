@@ -194,6 +194,48 @@
         }
         .empty-state h3 { margin-bottom: 8px; color: var(--text); }
 
+        /* Client badges */
+        .clients-bar {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 6px 20px;
+            display: flex; align-items: center; gap: 8px;
+            font-size: 12px; color: var(--text-muted);
+            flex-wrap: wrap;
+        }
+        .client-badge {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: 12px; padding: 2px 10px; font-size: 12px;
+        }
+        .client-badge .dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            display: inline-block;
+        }
+        .client-badge .dot.online { background: var(--green); }
+        .client-badge .dot.offline { background: var(--red); }
+
+        /* Target selector */
+        .target-select {
+            background: var(--bg); border: 1px solid var(--border);
+            color: var(--text); padding: 6px 10px; border-radius: 6px;
+            font-size: 13px; outline: none; min-width: 80px;
+        }
+        .target-select:focus { border-color: var(--accent); }
+        .input-meta {
+            display: flex; align-items: center; gap: 6px;
+            margin-bottom: 8px; font-size: 12px; color: var(--text-muted);
+        }
+
+        /* Response client tag */
+        .client-tag {
+            display: inline-block;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: 4px; padding: 0 6px;
+            font-size: 11px; color: var(--accent);
+            margin-left: 4px;
+        }
+
         /* Responsive */
         @media (max-width: 600px) {
             .message { max-width: 95%; }
@@ -238,6 +280,11 @@
         </div>
     </div>
 
+    <div class="clients-bar" id="clientsBar" style="display:none;">
+        <span>Clients:</span>
+        <span id="clientBadges"></span>
+    </div>
+
     <div class="chat" id="chatArea">
         <div class="empty-state" id="emptyState">
             <h3>No messages yet</h3>
@@ -246,6 +293,12 @@
     </div>
 
     <div class="input-area">
+        <div class="input-meta">
+            <label for="targetSelect">Send to:</label>
+            <select class="target-select" id="targetSelect">
+                <option value="all">All clients</option>
+            </select>
+        </div>
         <form class="input-form" onsubmit="sendPrompt(event)">
             <textarea id="promptInput" placeholder="Type a prompt… (Enter to send, Shift+Enter for newline)" rows="1"
                 onkeydown="handleKey(event)"
@@ -281,6 +334,7 @@ let currentIssue = null;
 let knownCommentIds = new Set();
 let pollTimer = null;
 let messages = [];
+let connectedClients = {};  // { name: { lastSeen: Date, status: string } }
 
 // ─── Init ───
 (function init() {
@@ -389,13 +443,25 @@ async function loadAllComments() {
 function parseComment(comment) {
     const body = comment.body || '';
     if (body.startsWith('### 🧑 Prompt')) {
-        return { id: comment.id, type: 'prompt', content: body.replace(/^### 🧑 Prompt\s*\n*/, ''), ts: comment.created_at, user: comment.user.login };
+        // Parse "### 🧑 Prompt ➜ target" or "### 🧑 Prompt"
+        const targetMatch = body.match(/^### 🧑 Prompt(?:\s*➜\s*(\S+))?/);
+        const target = targetMatch && targetMatch[1] ? targetMatch[1] : 'all';
+        const content = body.replace(/^### 🧑 Prompt(?:\s*➜\s*\S+)?\s*\n*/, '');
+        return { id: comment.id, type: 'prompt', target, content, ts: comment.created_at, user: comment.user.login };
     }
     if (body.startsWith('### 🤖 Response')) {
-        return { id: comment.id, type: 'response', content: body.replace(/^### 🤖 Response\s*\n*/, ''), ts: comment.created_at, user: comment.user.login };
+        // Parse "### 🤖 Response [client-name]"
+        const clientMatch = body.match(/^### 🤖 Response\s*\[([^\]]+)\]/);
+        const clientName = clientMatch ? clientMatch[1] : 'unknown';
+        const content = body.replace(/^### 🤖 Response(?:\s*\[[^\]]+\])?\s*\n*/, '');
+        return { id: comment.id, type: 'response', clientName, content, ts: comment.created_at, user: comment.user.login };
     }
     if (body.startsWith('### 📡 Status')) {
-        return { id: comment.id, type: 'status', content: body.replace(/^### 📡 Status\s*\n*/, ''), ts: comment.created_at, user: comment.user.login };
+        // Parse "### 📡 Status [client-name]"
+        const clientMatch = body.match(/^### 📡 Status\s*\[([^\]]+)\]/);
+        const clientName = clientMatch ? clientMatch[1] : 'unknown';
+        const content = body.replace(/^### 📡 Status(?:\s*\[[^\]]+\])?\s*\n*/, '');
+        return { id: comment.id, type: 'status', clientName, content, ts: comment.created_at, user: comment.user.login };
     }
     return null;
 }
@@ -423,20 +489,67 @@ function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = 
 
 // ─── Status ───
 function refreshStatus() {
+    connectedClients = {};
     const statusMsgs = messages.filter(m => m.type === 'status');
-    const dot = document.getElementById('statusDot');
-    const txt = document.getElementById('statusText');
-    if (statusMsgs.length > 0) {
-        const latest = statusMsgs[statusMsgs.length - 1];
-        const ageS = (Date.now() - new Date(latest.ts).getTime()) / 1000;
-        if (ageS < 180) {
-            dot.classList.add('connected');
-            txt.textContent = 'Client connected';
-            return;
+    // Build map of latest status per client
+    for (const m of statusMsgs) {
+        connectedClients[m.clientName] = {
+            lastSeen: new Date(m.ts),
+            content: m.content,
+        };
+    }
+    // Also pick up client names from responses
+    for (const m of messages.filter(m => m.type === 'response')) {
+        if (m.clientName && !connectedClients[m.clientName]) {
+            connectedClients[m.clientName] = { lastSeen: new Date(m.ts), content: '' };
         }
     }
-    dot.classList.remove('connected');
-    txt.textContent = 'Client offline';
+
+    const dot = document.getElementById('statusDot');
+    const txt = document.getElementById('statusText');
+    const bar = document.getElementById('clientsBar');
+    const badges = document.getElementById('clientBadges');
+    const targetSel = document.getElementById('targetSelect');
+
+    const clientNames = Object.keys(connectedClients);
+    if (clientNames.length === 0) {
+        dot.classList.remove('connected');
+        txt.textContent = 'No clients';
+        bar.style.display = 'none';
+        return;
+    }
+
+    let onlineCount = 0;
+    let badgeHtml = '';
+    for (const name of clientNames) {
+        const ageS = (Date.now() - connectedClients[name].lastSeen.getTime()) / 1000;
+        const online = ageS < 180;
+        if (online) onlineCount++;
+        badgeHtml += `<span class="client-badge"><span class="dot ${online ? 'online' : 'offline'}"></span>${escapeHtml(name)}</span> `;
+    }
+    badges.innerHTML = badgeHtml;
+    bar.style.display = 'flex';
+
+    if (onlineCount > 0) {
+        dot.classList.add('connected');
+        txt.textContent = `${onlineCount} client${onlineCount > 1 ? 's' : ''} online`;
+    } else {
+        dot.classList.remove('connected');
+        txt.textContent = 'All clients offline';
+    }
+
+    // Update target selector — preserve current selection
+    const currentTarget = targetSel.value;
+    targetSel.innerHTML = '<option value="all">All clients</option>';
+    for (const name of clientNames) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        targetSel.appendChild(opt);
+    }
+    if (currentTarget && [...targetSel.options].some(o => o.value === currentTarget)) {
+        targetSel.value = currentTarget;
+    }
 }
 
 // ─── Send ───
@@ -448,7 +561,9 @@ async function sendPrompt(e) {
     const btn = document.getElementById('sendBtn');
     btn.disabled = true; input.disabled = true;
     try {
-        const body = `### 🧑 Prompt\n\n${text}`;
+        const target = document.getElementById('targetSelect').value;
+        const header = target === 'all' ? '### 🧑 Prompt' : `### 🧑 Prompt ➜ ${target}`;
+        const body = `${header}\n\n${text}`;
         const comment = await ghAPI(`/issues/${currentIssue}/comments`, {
             method: 'POST',
             body: JSON.stringify({ body })
@@ -475,13 +590,21 @@ function renderMessages() {
             <p>Start the Python client to create a session, or type a prompt below.</p></div>`;
         return;
     }
-    chat.innerHTML = display.map(m => `
-        <div class="message ${m.type}">
-            <div class="message-header">
-                ${m.type === 'prompt' ? '🧑 You' : '🤖 CLI'} · ${new Date(m.ts).toLocaleString()}
-            </div>
-            <div class="message-body">${escapeHtml(m.content)}</div>
-        </div>`).join('');
+    chat.innerHTML = display.map(m => {
+        if (m.type === 'prompt') {
+            const targetLabel = m.target && m.target !== 'all' ? ` ➜ <span class="client-tag">${escapeHtml(m.target)}</span>` : ' ➜ all';
+            return `<div class="message prompt">
+                <div class="message-header">🧑 You${targetLabel} · ${new Date(m.ts).toLocaleString()}</div>
+                <div class="message-body">${escapeHtml(m.content)}</div>
+            </div>`;
+        } else {
+            const fromLabel = m.clientName ? `<span class="client-tag">${escapeHtml(m.clientName)}</span>` : '';
+            return `<div class="message response">
+                <div class="message-header">🤖 ${fromLabel} · ${new Date(m.ts).toLocaleString()}</div>
+                <div class="message-body">${escapeHtml(m.content)}</div>
+            </div>`;
+        }
+    }).join('');
     chat.scrollTop = chat.scrollHeight;
 }
 
