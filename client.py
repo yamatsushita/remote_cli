@@ -2,7 +2,7 @@
 """
 Remote CLI Client
 
-Polls a GitHub Issue for prompts posted via the web interface,
+Polls a GitHub Issue for prompts posted via issue comments,
 processes them locally, and posts responses back as comments.
 
 Usage:
