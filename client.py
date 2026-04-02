@@ -84,9 +84,17 @@ class RemoteCLIClient:
 
     def _api(self, method: str, path: str, **kwargs):
         url = f"{self.base_url}{path}"
-        resp = self.session.request(method, url, **kwargs)
-        resp.raise_for_status()
-        return resp.json() if resp.content else None
+        last_resp = None
+        for attempt in range(3):
+            resp = self.session.request(method, url, **kwargs)
+            if resp.status_code == 422 and attempt < 2:
+                # GitHub secondary rate-limit / anti-abuse — retry after pause
+                time.sleep(2 ** attempt)
+                last_resp = resp
+                continue
+            resp.raise_for_status()
+            return resp.json() if resp.content else None
+        last_resp.raise_for_status()
 
     # ── Label ───────────────────────────────────────────────────
 
@@ -107,7 +115,7 @@ class RemoteCLIClient:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         hostname = platform.node()
         issue = self._api("POST", "/issues", json={
-            "title": f"Remote CLI Session – {self.name} – {ts}",
+            "title": f"{self.name} – {hostname} – {ts}",
             "body": (
                 "🖥️ **Remote CLI Session**\n\n"
                 "This issue is the communication channel between the web "
@@ -125,14 +133,6 @@ class RemoteCLIClient:
 
     def join_session(self, issue_number: int):
         self.issue_number = issue_number
-        # Update the issue title to reflect this client's name
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-        try:
-            self._api("PATCH", f"/issues/{issue_number}", json={
-                "title": f"Remote CLI Session – {self.name} – {ts}",
-            })
-        except Exception:
-            pass
         comments = self._api(
             "GET", f"/issues/{issue_number}/comments?per_page=100"
         )
@@ -154,7 +154,40 @@ class RemoteCLIClient:
         )
         self._post_status("🟢 Connected and ready.")
 
+    def find_own_session(self) -> int | None:
+        """Find the latest open session created by this client (by name)."""
+        issues = self._api(
+            "GET",
+            f"/issues?labels={self.LABEL}&state=open"
+            "&sort=created&direction=desc&per_page=100",
+        )
+        for issue in issues:
+            title = issue.get("title", "")
+            if title.startswith(f"{self.name} –"):
+                return issue["number"]
+        return None
+
+    def is_name_active(self) -> bool:
+        """Check if another client with the same name is already connected."""
+        issues = self._api(
+            "GET",
+            f"/issues?labels={self.LABEL}&state=open"
+            "&sort=created&direction=desc&per_page=100",
+        )
+        for issue in issues:
+            comments = self._api(
+                "GET",
+                f"/issues/{issue['number']}/comments?per_page=100",
+            )
+            # Walk backwards to find this client's latest status comment
+            for c in reversed(comments):
+                body = c.get("body", "")
+                if body.startswith(f"### 📡 Status [{self.name}]"):
+                    return "🟢" in body
+        return False
+
     def find_latest_session(self) -> int | None:
+        """Find the latest open session regardless of client name."""
         issues = self._api(
             "GET",
             f"/issues?labels={self.LABEL}&state=open"
@@ -526,6 +559,10 @@ class RemoteCLIClient:
         print(f"\n🛑 [{self.name}] Shutting down…")
         try:
             self._post_status(f"🔴 Client `{self.name}` disconnected.")
+            self._api("PATCH", f"/issues/{self.issue_number}", json={
+                "state": "closed",
+            })
+            print(f"   Issue #{self.issue_number} closed.")
         except Exception:
             pass
 
@@ -608,16 +645,32 @@ def main():
     client = RemoteCLIClient(args.token, owner, repo, args.name)
     signal.signal(signal.SIGINT, lambda *_: setattr(client, "running", False))
 
+    # Reject launch if another client with the same name is already online
+    if client.is_name_active():
+        print(
+            f"❌ A client named '{args.name}' is already connected. "
+            "Use --name to choose a different name."
+        )
+        sys.exit(1)
+
     if args.join:
         client.join_session(args.join)
     elif args.new:
         client.create_session()
-    else:
+    elif args.latest:
         issue = client.find_latest_session()
         if issue:
             client.join_session(issue)
         else:
             print("No open session found – creating a new one…")
+            client.create_session()
+    else:
+        # Default: find this client's own session, or create a new one
+        issue = client.find_own_session()
+        if issue:
+            client.join_session(issue)
+        else:
+            print(f"No open session for '{args.name}' – creating a new one…")
             client.create_session()
 
     client.run()
