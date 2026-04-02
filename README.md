@@ -67,6 +67,8 @@ is already connected, the new one is rejected — use a different `--name`.
 | `\ping`                        | Client replies with a pong to confirm it's alive   |
 | `\status`                      | Client replies with host system information        |
 | `\shell ls -la`                | Client runs the shell command and posts the output |
+| `\clear`                       | Deletes all comments and resets Copilot context    |
+| `\esc`                         | Cancels the currently running Copilot/shell task   |
 | `\help`                        | Client lists all available commands                |
 | `list all files in src/`       | Sent to GitHub Copilot CLI for processing          |
 
@@ -96,12 +98,14 @@ first client's session. When a client disconnects, its issue is closed automatic
 
 Built-in commands start with `\` to distinguish them from regular prompts.
 
-| Command          | Description                        |
-|------------------|------------------------------------|
-| `\ping`          | Check if the client is alive       |
-| `\status`        | Show host system information       |
-| `\shell <cmd>`   | Run a shell command (30 s timeout) |
-| `\help`          | List available commands            |
+| Command          | Description                              |
+|------------------|------------------------------------------|
+| `\ping`          | Check if the client is alive             |
+| `\status`        | Show host system information             |
+| `\shell <cmd>`   | Run a shell command (30 s timeout)       |
+| `\clear`         | Delete all comments and reset context    |
+| `\esc`           | Cancel the current processing            |
+| `\help`          | List available commands                  |
 
 Any other text is treated as a prompt and sent to GitHub Copilot CLI.
 

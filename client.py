@@ -60,6 +60,7 @@ class RemoteCLIClient:
         self.copilot_config_dir.mkdir(parents=True, exist_ok=True)
         # Default working directory: sibling *_sessions repo folder / <name>
         self.working_dir = self._find_sessions_dir(repo, name)
+        self._active_proc: subprocess.Popen | None = None
 
     # ── GitHub API ──────────────────────────────────────────────
 
@@ -242,6 +243,28 @@ class RemoteCLIClient:
             json={"body": body},
         )
 
+    def _clear_comments(self):
+        """Delete all comments on the current issue."""
+        comments = self._api(
+            "GET", f"/issues/{self.issue_number}/comments?per_page=100"
+        )
+        count = 0
+        for c in comments:
+            try:
+                self._api("DELETE", f"/issues/comments/{c['id']}")
+                count += 1
+            except Exception:
+                pass
+        self.processed_ids.clear()
+        self.status_comment_id = None
+        self.copilot_session_id = str(uuid.uuid4())
+        print(f"   🧹 Cleared {count} comments")
+        self._post_status("🟢 Client connected and ready.")
+        self._post_response(
+            f"🧹 Cleared {count} comments. "
+            "Copilot conversation context has been reset."
+        )
+
     # ── Polling ─────────────────────────────────────────────────
 
     def _get_new_prompts(self) -> list[dict]:
@@ -277,6 +300,36 @@ class RemoteCLIClient:
             self.processed_ids.add(c["id"])
         return prompts
 
+    def _check_for_esc(self) -> bool:
+        """Check if a \\esc comment has been posted since we last looked."""
+        try:
+            comments = self._api(
+                "GET", f"/issues/{self.issue_number}/comments?per_page=100"
+            )
+            for c in comments:
+                if c["id"] in self.processed_ids:
+                    continue
+                body = c.get("body", "").strip()
+                if body.startswith("### 🤖 Response") or body.startswith("### 📡 Status"):
+                    self.processed_ids.add(c["id"])
+                    continue
+                # Strip target prefix
+                target_match = re.match(r"^➜\s*(\S+)\s*\n", body)
+                if target_match:
+                    target = target_match.group(1)
+                    text = body[target_match.end():].strip()
+                    if target.lower() not in (self.name.lower(), "all"):
+                        continue
+                else:
+                    text = body
+                if text.lower() == "\\esc":
+                    self.processed_ids.add(c["id"])
+                    print(f"   ⛔ \\esc received — cancelling")
+                    return True
+        except Exception:
+            pass
+        return False
+
     # ── Prompt handling ─────────────────────────────────────────
 
     def process_prompt(self, prompt: dict) -> str:
@@ -284,6 +337,16 @@ class RemoteCLIClient:
 
         if text.lower() == "\\ping":
             return f"🏓 Pong from **{self.name}**!"
+
+        if text.lower() == "\\clear":
+            self._clear_comments()
+            return None
+
+        if text.lower() == "\\esc":
+            if self._active_proc and self._active_proc.poll() is None:
+                self._active_proc.kill()
+                return "⛔ Cancelled current processing."
+            return "ℹ️ Nothing is running."
 
         if text.lower() == "\\help":
             return (
@@ -293,6 +356,8 @@ class RemoteCLIClient:
                 "| `\\ping` | Check if client is alive |\n"
                 "| `\\status` | System information |\n"
                 "| `\\shell <cmd>` | Run a shell command (30 s timeout) |\n"
+                "| `\\clear` | Delete all comments and reset context |\n"
+                "| `\\esc` | Cancel the current processing |\n"
                 "| `\\help` | This help message |\n"
                 "| _anything else_ | Sent to GitHub Copilot CLI |\n"
             )
@@ -348,6 +413,7 @@ class RemoteCLIClient:
                 cwd=self.working_dir,
                 env={**os.environ, "NO_COLOR": "1", "PYTHONUTF8": "1"},
             )
+            self._active_proc = proc
 
             # Reader threads — accumulate lines in shared lists
             stdout_lines: list[str] = []
@@ -385,6 +451,17 @@ class RemoteCLIClient:
             while proc.poll() is None:
                 time.sleep(0.5)
                 elapsed = time.time() - start_time
+
+                # Check for \esc cancel request
+                if self._check_for_esc():
+                    proc.kill()
+                    proc.wait()
+                    self._active_proc = None
+                    self._update_response_comment(
+                        comment_id,
+                        "⛔ _Cancelled by user._",
+                    )
+                    return None
 
                 # Check for new output to reset idle timer
                 with lock:
@@ -438,6 +515,7 @@ class RemoteCLIClient:
                     last_update_time = now
 
             # ── Process exited — collect final output ────────────
+            self._active_proc = None
             t_out.join(timeout=5)
             t_err.join(timeout=5)
 
