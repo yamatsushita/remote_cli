@@ -680,9 +680,32 @@ def _detect_repo_from_git() -> tuple[str, str] | None:
     return None
 
 
+AVAILABLE_MODELS = [
+    "claude-sonnet-4.6",
+    "claude-sonnet-4.5",
+    "claude-haiku-4.5",
+    "claude-opus-4.7",
+    "claude-opus-4.6",
+    "claude-opus-4.6-fast",
+    "claude-opus-4.5",
+    "claude-sonnet-4",
+    "gpt-5.4",
+    "gpt-5.3-codex",
+    "gpt-5.2-codex",
+    "gpt-5.2",
+    "gpt-5.1",
+    "gpt-5.4-mini",
+    "gpt-5-mini",
+    "gpt-4.1",
+]
+
+
 def main():
+    model_list = ", ".join(AVAILABLE_MODELS)
     parser = argparse.ArgumentParser(
-        description="Remote CLI Client – bridge GitHub ↔ local shell"
+        description="Remote CLI Client – bridge GitHub ↔ local shell",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"available models for --model:\n  {model_list}",
     )
     parser.add_argument(
         "--token",
@@ -705,7 +728,9 @@ def main():
     parser.add_argument(
         "--model",
         default=None,
-        help="Model to use for Copilot CLI (e.g. claude-sonnet-4, gpt-4o)",
+        choices=AVAILABLE_MODELS,
+        metavar="MODEL",
+        help="Model for Copilot CLI. Use --help to see available models.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--new", action="store_true", help="Create a new session")
