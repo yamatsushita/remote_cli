@@ -379,6 +379,7 @@ class RemoteCLIClient:
             "⏳ _Copilot is thinking…_"
         )
         start_time = time.time()
+        print(f"   🚀 Copilot started (session: {self.copilot_session_id[:8]}…)")
 
         try:
             cmd = [
@@ -407,7 +408,7 @@ class RemoteCLIClient:
             stderr_lines: list[str] = []
             lock = threading.Lock()
 
-            def _read_stream(stream, lines):
+            def _read_stream(stream, lines, prefix=""):
                 try:
                     while True:
                         line = stream.readline()
@@ -415,15 +416,19 @@ class RemoteCLIClient:
                             break
                         with lock:
                             lines.append(line)
+                        # Stream to local console in real time
+                        stripped = line.rstrip("\n\r")
+                        if stripped:
+                            print(f"   {prefix}{stripped}", flush=True)
                 except Exception:
                     pass
 
             t_out = threading.Thread(
-                target=_read_stream, args=(proc.stdout, stdout_lines),
+                target=_read_stream, args=(proc.stdout, stdout_lines, ""),
                 daemon=True,
             )
             t_err = threading.Thread(
-                target=_read_stream, args=(proc.stderr, stderr_lines),
+                target=_read_stream, args=(proc.stderr, stderr_lines, "[err] "),
                 daemon=True,
             )
             t_out.start()
@@ -448,6 +453,7 @@ class RemoteCLIClient:
                         comment_id,
                         "⛔ _Cancelled by user._",
                     )
+                    print(f"   ⛔ Copilot cancelled by \\esc")
                     return None
 
                 # Check for new output to reset idle timer
@@ -465,6 +471,7 @@ class RemoteCLIClient:
                         comment_id,
                         "⏰ Copilot timed out (no output for 24 hours).",
                     )
+                    print(f"   ⏰ Copilot timed out (no output for 24 hours)")
                     return None
 
                 # Periodic progress update
@@ -538,6 +545,7 @@ class RemoteCLIClient:
                 comment_id,
                 f"{output}\n\n✅ _Done ({elapsed_total}s)_",
             )
+            print(f"   ✅ Copilot done ({elapsed_total}s, exit code {proc.returncode})")
             return None
 
         except FileNotFoundError:
@@ -546,15 +554,18 @@ class RemoteCLIClient:
                 "❌ `gh copilot` not found. "
                 "Install GitHub CLI with Copilot extension.",
             )
+            print(f"   ❌ gh copilot not found")
             return None
         except Exception as e:
             self._update_response_comment(
                 comment_id,
                 f"❌ Copilot error: {type(e).__name__}: {e}",
             )
+            print(f"   ❌ Copilot error: {type(e).__name__}: {e}")
             return None
 
     def _run_shell(self, cmd: str) -> str:
+        print(f"   🐚 Running: {cmd}")
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True,
@@ -564,13 +575,22 @@ class RemoteCLIClient:
             parts = []
             if result.stdout:
                 parts.append(f"**stdout:**\n```\n{result.stdout[:3000]}\n```")
+                for line in result.stdout.splitlines()[:50]:
+                    print(f"   {line}")
+                if len(result.stdout.splitlines()) > 50:
+                    print(f"   … ({len(result.stdout.splitlines()) - 50} more lines)")
             if result.stderr:
                 parts.append(f"**stderr:**\n```\n{result.stderr[:1500]}\n```")
+                for line in result.stderr.splitlines()[:20]:
+                    print(f"   [err] {line}")
             parts.append(f"_Exit code: {result.returncode}_")
+            print(f"   Shell exit code: {result.returncode}")
             return "\n\n".join(parts) if parts else "_No output_"
         except subprocess.TimeoutExpired:
+            print(f"   ⏰ Shell timed out (30s)")
             return "⏰ Command timed out (30 s limit)."
         except Exception as e:
+            print(f"   ❌ Shell error: {e}")
             return f"❌ Error: {e}"
 
     # ── Heartbeat ───────────────────────────────────────────────
