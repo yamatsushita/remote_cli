@@ -6,10 +6,11 @@ Polls a GitHub Issue for prompts posted via issue comments,
 processes them locally, and posts responses back as comments.
 
 Usage:
-    python client.py --token ghp_xxx
-    python client.py --new          # force a new session
-    python client.py --join 3       # join issue #3
-    python client.py --latest       # join latest open session
+    python remote_cli.py --token ghp_xxx --name desktop
+    python remote_cli.py --name desktop --new          # force a new session
+    python remote_cli.py --name desktop --join 3       # join issue #3
+    python remote_cli.py --name desktop --latest       # join latest open session
+    python remote_cli.py --name desktop --model claude-sonnet-4
 
 Environment:
     GITHUB_TOKEN   Personal Access Token (alternative to --token)
@@ -38,11 +39,13 @@ class RemoteCLIClient:
     POLL_INTERVAL = 5
     HEARTBEAT_INTERVAL = 60
 
-    def __init__(self, token: str, owner: str, repo: str, name: str = "default"):
+    def __init__(self, token: str, owner: str, repo: str, name: str,
+                 model: str | None = None):
         self.token = token
         self.owner = owner
         self.repo = repo
         self.name = name
+        self.model = model
         self.base_url = f"https://api.github.com/repos/{owner}/{repo}"
         self.session = requests.Session()
         self.session.headers.update({
@@ -58,30 +61,12 @@ class RemoteCLIClient:
         self.copilot_session_id = str(uuid.uuid4())
         self.copilot_config_dir = Path.home() / ".copilot-remote" / name
         self.copilot_config_dir.mkdir(parents=True, exist_ok=True)
-        # Default working directory: sibling *_sessions repo folder / <name>
-        self.working_dir = self._find_sessions_dir(repo, name)
+        # Working directory: subfolder named after the client
+        self.working_dir = Path.cwd() / name
+        self.working_dir.mkdir(parents=True, exist_ok=True)
         self._active_proc: subprocess.Popen | None = None
 
     # ── GitHub API ──────────────────────────────────────────────
-
-    @staticmethod
-    def _find_sessions_dir(repo: str, name: str) -> Path | None:
-        """Locate the sibling *_sessions repo directory and create a
-        per-client subdirectory (<name>) to use as cwd."""
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, timeout=5,
-            )
-            git_root = Path(result.stdout.strip())
-            sessions_dir = git_root.parent / repo
-            if sessions_dir.is_dir():
-                client_dir = sessions_dir / name
-                client_dir.mkdir(parents=True, exist_ok=True)
-                return client_dir
-        except Exception:
-            pass
-        return None
 
     def _api(self, method: str, path: str, **kwargs):
         url = f"{self.base_url}{path}"
@@ -403,6 +388,8 @@ class RemoteCLIClient:
                 f"--resume={self.copilot_session_id}",
                 f"--config-dir={self.copilot_config_dir}",
             ]
+            if self.model:
+                cmd.extend(["--model", self.model])
 
             proc = subprocess.Popen(
                 cmd,
@@ -599,9 +586,10 @@ class RemoteCLIClient:
     def run(self):
         print(f"🔄 [{self.name}] Polling Issue #{self.issue_number} every {self.POLL_INTERVAL}s")
         print(f"   Responds to prompts targeted at: \"{self.name}\" or \"all\"")
-        print(f"   Working dir:     {self.working_dir or os.getcwd()}")
+        print(f"   Working dir:     {self.working_dir}")
         print(f"   Copilot session: {self.copilot_session_id}")
         print(f"   Copilot config:  {self.copilot_config_dir}")
+        print(f"   Copilot model:   {self.model or '(default)'}")
         print("   Press Ctrl+C to stop\n")
 
         while self.running:
@@ -691,8 +679,13 @@ def main():
     )
     parser.add_argument(
         "--name",
-        default=platform.node(),
-        help="Client name for multi-client routing (default: hostname)",
+        required=True,
+        help="Client name (required). Used for multi-client routing and as the working subfolder name.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model to use for Copilot CLI (e.g. claude-sonnet-4, gpt-4o)",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--new", action="store_true", help="Create a new session")
@@ -720,7 +713,7 @@ def main():
             )
             sys.exit(1)
 
-    client = RemoteCLIClient(args.token, owner, repo, args.name)
+    client = RemoteCLIClient(args.token, owner, repo, args.name, args.model)
     signal.signal(signal.SIGINT, lambda *_: setattr(client, "running", False))
 
     # Reject launch if another client with the same name is already online
