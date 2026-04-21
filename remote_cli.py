@@ -701,42 +701,79 @@ AVAILABLE_MODELS = [
 
 
 def main():
-    model_list = ", ".join(AVAILABLE_MODELS)
+    model_list = "\n".join(f"    {m}" for m in AVAILABLE_MODELS)
     parser = argparse.ArgumentParser(
-        description="Remote CLI Client – bridge GitHub ↔ local shell",
+        description="Remote CLI Client – bridge GitHub Issues ↔ local Copilot CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"available models for --model:\n  {model_list}",
+        epilog=(
+            "examples:\n"
+            "  python remote_cli.py --token ghp_xxx --name desktop\n"
+            "  python remote_cli.py --token ghp_xxx --name desktop --model claude-sonnet-4\n"
+            "  python remote_cli.py --token ghp_xxx --name desktop --new\n"
+            "  python remote_cli.py --token ghp_xxx --name worker --latest\n"
+            "  python remote_cli.py --token ghp_xxx --name laptop --join 5\n"
+            "  python remote_cli.py --owner USER --repo my_sessions --name desktop\n"
+            "\n"
+            "available models for --model:\n"
+            f"{model_list}\n"
+            "\n"
+            "session behaviour:\n"
+            "  By default, the client resumes its own open session (matched by\n"
+            "  --name) or creates a new one. Use --new to force a fresh session,\n"
+            "  --join N to attach to a specific issue, or --latest to join the\n"
+            "  most recent open session from any client.\n"
+            "\n"
+            "working directory:\n"
+            "  On launch, a subfolder named <NAME> is created in the current\n"
+            "  directory and used as the working directory for all Copilot CLI\n"
+            "  and \\shell commands."
+        ),
     )
     parser.add_argument(
         "--token",
         default=os.environ.get("GITHUB_TOKEN"),
-        help="GitHub PAT (or set GITHUB_TOKEN env var)",
+        help="GitHub Personal Access Token. Can also be set via the "
+             "GITHUB_TOKEN environment variable.",
     )
     parser.add_argument(
         "--owner",
-        help="Repository owner (auto-detected from git remote if omitted)",
+        help="GitHub repository owner (username or org). Auto-detected "
+             "from the git remote of the current directory if omitted.",
     )
     parser.add_argument(
         "--repo",
-        help="Sessions repository name (default: auto-detect + '_sessions')",
+        help="Name of the sessions repository used for issue-based "
+             "communication. Auto-detected as <repo>_sessions if omitted.",
     )
     parser.add_argument(
         "--name",
         required=True,
-        help="Client name (required). Used for multi-client routing and as the working subfolder name.",
+        help="Client name (required). Identifies this client for "
+             "multi-client routing and determines the working subfolder "
+             "(./<NAME>/) created on launch.",
     )
     parser.add_argument(
         "--model",
         default=None,
         choices=AVAILABLE_MODELS,
         metavar="MODEL",
-        help="Model for Copilot CLI. Use --help to see available models.",
+        help="AI model for the Copilot CLI backend. See the list of "
+             "available models below.",
     )
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--new", action="store_true", help="Create a new session")
-    group.add_argument("--join", type=int, metavar="N", help="Join issue #N")
     group.add_argument(
-        "--latest", action="store_true", help="Join the latest session"
+        "--new", action="store_true",
+        help="Force-create a new session even if this client already "
+             "has an open one.",
+    )
+    group.add_argument(
+        "--join", type=int, metavar="N",
+        help="Join an existing session by issue number N.",
+    )
+    group.add_argument(
+        "--latest", action="store_true",
+        help="Join the most recent open session regardless of which "
+             "client created it.",
     )
     args = parser.parse_args()
 
